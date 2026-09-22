@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LineOracle - know your real wait</title>
+<style>
+  :root { --ink:#1c2b26; --muted:#6b7a73; --accent:#2f6f5e; --accent-dk:#265c4e; --card:#ffffff; --bg:#f4f6f3; --warn:#b8860b; --bad:#b4443c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:680px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  .tag { color:var(--muted); margin:0 0 20px; line-height:1.45; }
+  .card { background:var(--card); border:1px solid #e3e8e4; border-radius:14px; padding:18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  input[type=number], input[type=text] { width:110px; padding:9px 10px; border:1px solid #d4dcd6; border-radius:8px; font-size:15px; }
+  input[type=text] { width:180px; }
+  button { padding:10px 16px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; cursor:pointer; }
+  button:hover { background:var(--accent-dk); }
+  button.ghost { background:#eef1ee; color:var(--ink); }
+  button.ghost:hover { background:#e2e7e2; }
+  #tapBtn { width:100%; padding:22px; font-size:19px; font-weight:600; border-radius:12px; }
+  .big { font-size:34px; font-weight:700; margin:4px 0 2px; }
+  .sub { color:var(--muted); font-size:14px; }
+  .band { display:flex; gap:18px; margin-top:10px; flex-wrap:wrap; }
+  .band div { font-size:14px; }
+  .band b { display:block; font-size:20px; margin-top:2px; }
+  .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .pill.solid { background:#e2f0e6; color:#2f6f45; }
+  .pill.fair { background:#f6ecd2; color:#8a6a14; }
+  .pill.rough { background:#f6e0dd; color:#8f3a33; }
+  .ahead-edit { display:flex; gap:8px; align-items:center; margin-top:12px; }
+  .ahead-edit button { padding:6px 12px; font-size:16px; }
+  .ahead-edit span { min-width:36px; text-align:center; font-size:20px; font-weight:600; }
+  .log { font-size:13px; color:var(--muted); margin-top:10px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LineOracle</h1>
+  <p class="tag">"The sign says 20 minutes" means nothing. Tap each time someone gets served, and LineOracle learns the line's real pace - then tells you when you'll actually reach the front.</p>
+
+  <div class="card">
+    <div class="row">
+      <div><label for="place">Place (optional)</label><input type="text" id="place" placeholder="DMV window 3"></div>
+      <div><label for="ahead">People ahead of you</label><input type="number" id="ahead" min="0" value="8"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <button id="tapBtn">Someone just got served</button>
+    <div class="log" id="tapLog">No taps yet. Two taps is all it takes for a first estimate.</div>
+  </div>
+
+  <div class="card hidden" id="resultCard">
+    <div class="sub" id="paceLabel">-</div>
+    <div class="big" id="waitBig">-</div>
+    <div class="sub" id="etaLabel">-</div>
+    <div class="band">
+      <div class="sub">Optimistic<b id="lowVal">-</b></div>
+      <div class="sub">Pessimistic<b id="highVal">-</b></div>
+      <div class="sub">Estimate<span id="confPill" style="margin-left:6px"></span></div>
+    </div>
+    <div class="ahead-edit">
+      <span class="sub" style="font-size:13px;font-weight:400">Still ahead:</span>
+      <button class="ghost" id="minusBtn">-</button>
+      <span id="aheadNow">8</span>
+      <button class="ghost" id="plusBtn">+</button>
+    </div>
+  </div>
+
+  <div style="text-align:center; margin-top:18px">
+    <button class="ghost" id="resetBtn">Start a new line</button>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script>
+(function(){
+  var E = LineOracleEngine;
+  var state = { place:'', ahead:8, taps:[] };
+  try { var saved = JSON.parse(localStorage.getItem('lineoracle') || 'null'); if (saved && saved.taps) state = saved; } catch(e){}
+
+  var $ = function(id){ return document.getElementById(id); };
+
+  function save(){ localStorage.setItem('lineoracle', JSON.stringify(state)); }
+
+  function render(){
+    $('place').value = state.place || '';
+    $('ahead').value = state.ahead;
+    $('aheadNow').textContent = state.ahead;
+    var n = state.taps.length;
+    $('tapLog').textContent = n === 0 ? 'No taps yet. Two taps is all it takes for a first estimate.'
+      : n === 1 ? 'One tap in. Tap again when the next person is served.'
+      : n + ' people served so far.';
+    var wait = E.projectWaitMin(state.ahead, state.taps);
+    if (wait === null){ $('resultCard').classList.add('hidden'); return; }
+    $('resultCard').classList.remove('hidden');
+    var b = E.band(state.ahead, state.taps);
+    $('paceLabel').textContent = E.fmtInterval(E.avgIntervalMs(state.taps)) + ' (' + (n-1) + ' intervals measured)';
+    $('waitBig').textContent = E.fmtMin(wait);
+    $('etaLabel').textContent = 'You reach the front around ' + E.fmtClock(E.etaMs(Date.now(), wait));
+    $('lowVal').textContent = E.fmtMin(b.low);
+    $('highVal').textContent = E.fmtMin(b.high);
+    var conf = E.confidence(state.taps);
+    var pill = $('confPill');
+    pill.textContent = conf;
+    pill.className = 'pill ' + (conf === 'solid' ? 'solid' : conf === 'fair' ? 'fair' : 'rough');
+  }
+
+  $('tapBtn').addEventListener('click', function(){
+    state.taps.push(Date.now());
+    if (state.taps.length > 60) state.taps = state.taps.slice(-60);
+    save(); render();
+  });
+  $('ahead').addEventListener('change', function(){
+    var v = parseInt(this.value, 10);
+    state.ahead = isNaN(v) || v < 0 ? 0 : v;
+    save(); render();
+  });
+  $('place').addEventListener('change', function(){ state.place = this.value; save(); });
+  $('minusBtn').addEventListener('click', function(){ state.ahead = Math.max(0, state.ahead - 1); save(); render(); });
+  $('plusBtn').addEventListener('click', function(){ state.ahead += 1; save(); render(); });
+  $('resetBtn').addEventListener('click', function(){
+    state = { place:'', ahead:0, taps:[] };
+    localStorage.removeItem('lineoracle');
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
